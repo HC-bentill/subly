@@ -1,0 +1,89 @@
+%%{init: {"theme":"default","sequence":{"showSequenceNumbers":true,"mirrorActors":false,"messageFontSize":13,"noteFontSize":12}}}%%
+sequenceDiagram
+    autonumber
+    actor Client as Client App
+    participant API as Subly API
+    participant Redis
+    participant DB as PostgreSQL
+    participant Sched as Billing Scheduler
+    participant Pay as Mock Payment Provider
+    participant Outbox as Outbox Relay
+    participant Kafka
+    participant WH as Webhook Worker
+    participant Ext as Merchant Endpoint
+
+    rect rgb(235,242,255)
+    Note over Client,DB: Auth (Phase 2)
+    Client->>API: POST /v1/auth/token (API key)
+    API->>DB: Look up SHA256(api key)
+    DB-->>API: Account + role
+    API-->>Client: JWT (15 min)
+    end
+
+    rect rgb(240,250,240)
+    Note over Client,DB: Catalog & customer setup (Phase 3)
+    Client->>API: POST /v1/products, /v1/plans (flat / per-seat / tiered)
+    API->>DB: INSERT Product, Plan, Price
+    Client->>API: POST /v1/customers
+    API->>DB: INSERT Customer
+    end
+
+    rect rgb(255,248,230)
+    Note over Client,Outbox: Subscribe (Phase 3)
+    Client->>API: POST /v1/subscriptions + Idempotency-Key
+    API->>Redis: Check idempotency cache
+    alt Cached
+        Redis-->>API: Stored response
+        API-->>Client: 201 (Idempotent-Replayed)
+    else New request
+        API->>Redis: Acquire lock(key)
+        API->>DB: BEGIN: INSERT Subscription (trialing/active) + OutboxEvent COMMIT
+        API->>Redis: Cache response, release lock
+        API-->>Client: 201 Subscription
+    end
+    end
+
+    rect rgb(245,238,255)
+    Note over Sched,Pay: Billing cycle (Phase 4-5)
+    Sched->>DB: Find subscriptions where period_end <= now (ShedLock)
+    Sched->>DB: BEGIN: INSERT Invoice (draft) + InvoiceLines (incl. proration)
+    Sched->>DB: Finalize: Invoice -> open, next invoice number, AR ledger debit, OutboxEvent COMMIT
+    Sched->>DB: SELECT invoice FOR UPDATE
+    Sched->>Pay: Charge(invoice total, customer)
+    alt Payment succeeds
+        Pay-->>Sched: Success
+        Sched->>DB: INSERT Payment (succeeded), ledger credit, Invoice -> paid, roll period forward, OutboxEvent
+    else Payment fails
+        Pay-->>Sched: Declined
+        Sched->>DB: INSERT Payment (failed), Subscription -> past_due, schedule retry, OutboxEvent
+        loop Dunning retries
+            Sched->>Pay: Retry charge
+        end
+        Sched->>DB: Retries exhausted: Invoice -> uncollectible, Subscription -> canceled
+    end
+    end
+
+    rect rgb(255,238,238)
+    Note over Outbox,Ext: Events & webhooks (Phase 6)
+    Outbox->>DB: Poll unpublished OutboxEvents
+    Outbox->>Kafka: Publish subscription / invoice / payment events
+    Outbox->>DB: Mark published
+    Kafka->>WH: Consume event (manual offset commit)
+    WH->>Ext: POST event + X-Subly-Signature (HMAC-SHA256)
+    alt 2xx
+        Ext-->>WH: OK
+        WH->>Kafka: Commit offset
+    else Failure
+        WH->>Kafka: webhook.delivery retry (3s -> 10s -> 60s -> 600s)
+        WH->>Kafka: After 5 attempts -> webhook.dlq
+    end
+    end
+
+    rect rgb(238,250,250)
+    Note over Client,DB: Changes & refunds (Phase 4-5)
+    Client->>API: PATCH /v1/subscriptions/{id} (upgrade/downgrade)
+    API->>DB: Compute proration, INSERT InvoiceLines, OutboxEvent
+    Client->>API: POST /v1/invoices/{id}/refund
+    API->>Pay: Refund
+    API->>DB: INSERT CreditNote, ledger reversal, OutboxEvent
+    end

@@ -1,0 +1,12 @@
+# Production (k3s). All connection settings come from env vars set by the ConfigMap/Secret.
+logging:
+  structured:
+    format:
+      console: ecs              # JSON logs; MDC correlationId is included automatically
+  level:
+    root: INFO
+
+management:
+  endpoint:
+    health:
+      show-details: never

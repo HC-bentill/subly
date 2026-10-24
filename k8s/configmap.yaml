@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: subly-config
+  namespace: subly
+data:
+  SPRING_PROFILES_ACTIVE: prod
+  # Postgres and Redis run on the homelab-services VM (shared with PayFlow; separate database).
+  SUBLY_DB_URL: jdbc:postgresql://192.168.100.12:5432/subly
+  SUBLY_REDIS_HOST: 192.168.100.12
+  SUBLY_REDIS_PORT: "6379"
+  SUBLY_KAFKA_BOOTSTRAP: kafka.payflow.svc.cluster.local:9092

@@ -1,0 +1,115 @@
+%%{init: {"theme":"default"}}%%
+erDiagram
+    CUSTOMER ||--o{ SUBSCRIPTION : "has"
+    CUSTOMER ||--o{ INVOICE : "is billed"
+    CUSTOMER ||--o{ PAYMENT_METHOD : "stores"
+    PRODUCT ||--o{ PLAN : "offers"
+    PLAN ||--|{ PRICE : "priced by"
+    PRICE ||--o{ PRICE_TIER : "tiers (tiered only)"
+    SUBSCRIPTION ||--|{ SUBSCRIPTION_ITEM : "contains"
+    PRICE ||--o{ SUBSCRIPTION_ITEM : "referenced by"
+    SUBSCRIPTION_ITEM ||--o{ USAGE_RECORD : "metered by"
+    SUBSCRIPTION ||--o{ INVOICE : "generates"
+    INVOICE ||--|{ INVOICE_LINE : "itemised in"
+    SUBSCRIPTION_ITEM ||--o{ INVOICE_LINE : "billed as"
+    INVOICE ||--o{ PAYMENT : "settled by"
+    PAYMENT_METHOD ||--o{ PAYMENT : "charged via"
+    INVOICE ||--o{ CREDIT_NOTE : "adjusted by"
+    PAYMENT ||--o{ REFUND : "reversed by"
+    INVOICE ||--o{ LEDGER_ENTRY : "posts"
+    PAYMENT ||--o{ LEDGER_ENTRY : "posts"
+    CREDIT_NOTE ||--o{ LEDGER_ENTRY : "posts"
+    OUTBOX_EVENT ||--o{ WEBHOOK_DELIVERY : "fans out to"
+    WEBHOOK_ENDPOINT ||--o{ WEBHOOK_DELIVERY : "receives"
+    API_KEY }o--|| ACCOUNT : "authenticates"
+
+    CUSTOMER { uuid id PK
+      string email
+      string name
+      string currency }
+    PRODUCT { uuid id PK
+      string name
+      bool active }
+    PLAN { uuid id PK
+      uuid product_id FK
+      string interval "month|year"
+      int trial_days }
+    PRICE { uuid id PK
+      uuid plan_id FK
+      string model "flat|per_seat|tiered"
+      decimal unit_amount
+      string currency }
+    PRICE_TIER { uuid id PK
+      uuid price_id FK
+      int up_to
+      decimal unit_amount }
+    SUBSCRIPTION { uuid id PK
+      uuid customer_id FK
+      string status "trialing|active|past_due|canceled"
+      timestamp current_period_start
+      timestamp current_period_end
+      timestamp trial_end
+      bool cancel_at_period_end }
+    SUBSCRIPTION_ITEM { uuid id PK
+      uuid subscription_id FK
+      uuid price_id FK
+      int quantity }
+    USAGE_RECORD { uuid id PK
+      uuid subscription_item_id FK
+      int quantity
+      timestamp recorded_at }
+    INVOICE { uuid id PK
+      string number UK
+      uuid customer_id FK
+      uuid subscription_id FK
+      string status "draft|open|paid|void|uncollectible"
+      decimal total
+      timestamp due_at }
+    INVOICE_LINE { uuid id PK
+      uuid invoice_id FK
+      uuid subscription_item_id FK
+      decimal amount
+      bool proration
+      string description }
+    PAYMENT_METHOD { uuid id PK
+      uuid customer_id FK
+      string mock_token
+      bool is_default }
+    PAYMENT { uuid id PK
+      uuid invoice_id FK
+      uuid payment_method_id FK
+      string status "succeeded|failed"
+      decimal amount
+      int attempt_no
+      string idempotency_key UK }
+    REFUND { uuid id PK
+      uuid payment_id FK
+      decimal amount }
+    CREDIT_NOTE { uuid id PK
+      uuid invoice_id FK
+      decimal amount
+      string reason }
+    LEDGER_ENTRY { uuid id PK
+      uuid customer_id FK
+      string source "invoice|payment|credit_note"
+      uuid source_id
+      string direction "debit|credit"
+      decimal amount }
+    OUTBOX_EVENT { uuid id PK
+      string type
+      jsonb payload
+      timestamp published_at }
+    WEBHOOK_ENDPOINT { uuid id PK
+      string url
+      string secret }
+    WEBHOOK_DELIVERY { uuid id PK
+      uuid outbox_event_id FK
+      uuid endpoint_id FK
+      string status
+      int attempts }
+    ACCOUNT { uuid id PK
+      string name
+      string role "admin|developer|readonly" }
+    API_KEY { uuid id PK
+      uuid account_id FK
+      string sha256_hash }
